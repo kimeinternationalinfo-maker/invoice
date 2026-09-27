@@ -57,7 +57,7 @@ td input{padding:6px 8px;font-size:.88rem;}
 .deco2{position:absolute;top:0;right:0;width:150px;height:80px;background:var(--red);border-radius:0 0 0 100px;z-index:1;}
 .inv-head{position:relative;z-index:2;display:flex;align-items:center;gap:16px;}
 .inv-head img{width:78px;height:78px;border-radius:50%;}
-.inv-title{font-size:2.3rem;font-weight:900;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin:22px 0 4px;letter-spacing:1px;}
+.inv-title{font-size:2.3rem;font-weight:900;color:var(--red);margin:22px 0 4px;letter-spacing:1px;}
 .inv-meta{font-size:.85rem;color:#333;margin-bottom:18px;}
 .inv-cols{display:flex;justify-content:space-between;gap:30px;position:relative;z-index:2;margin-bottom:14px;}
 .inv-col h4{font-size:.8rem;letter-spacing:1px;margin:0 0 8px;}
@@ -305,7 +305,25 @@ document.getElementById('genBtn').addEventListener('click', ()=>{
 
 document.getElementById('downloadPdf').addEventListener('click', ()=>{
   const el = document.getElementById('invoiceSheet');
-  html2pdf().set({margin:0, filename:(lastInvoiceData.invNo)+'.pdf', image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2, backgroundColor:'#ffffff'}, jsPDF:{unit:'pt',format:'a4',orientation:'portrait'}}).from(el).save();
+  const btn = document.getElementById('downloadPdf');
+  btn.disabled = true; btn.textContent = 'PDF හදනවා...';
+  html2pdf().set({
+    margin:0,
+    filename:(lastInvoiceData.invNo)+'.pdf',
+    image:{type:'jpeg',quality:0.98},
+    html2canvas:{
+      scale:2,
+      backgroundColor:'#ffffff',
+      useCORS:true,
+      allowTaint:true,
+      scrollX:0,
+      scrollY: -window.scrollY,
+      windowWidth: el.scrollWidth,
+      windowHeight: el.scrollHeight
+    },
+    jsPDF:{unit:'pt',format:'a4',orientation:'portrait'}
+  }).from(el).save().then(()=>{ btn.disabled=false; btn.textContent='PDF Download කරන්න'; })
+    .catch(()=>{ btn.disabled=false; btn.textContent='PDF Download කරන්න'; alert('PDF හදන්න බැරි වුනා, Print button එකෙන් "Save as PDF" try කරන්න.'); });
 });
 document.getElementById('printBtn').addEventListener('click', ()=> window.print());
 
@@ -452,3 +470,4 @@ document.getElementById('gdriveUpload').addEventListener('click', async ()=>{
 </script>
 </body>
 </html>
+
