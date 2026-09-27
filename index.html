@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>KIME INTERNATIONAL - Invoice System</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
   --bg:#f4f5f7; --card:#ffffff; --ink:#1a1a1a; --muted:#6b7280; --line:#e5e7eb;
@@ -151,7 +152,10 @@ table.inv-table tbody td:nth-child(3),table.inv-table tbody td:nth-child(4){text
     <div class="card">
       <div class="btn-row" style="margin-top:0;margin-bottom:10px;">
         <button class="btn btn-ghost" id="exportBtn">සියලු Data Backup (JSON) Download</button>
+        <button class="btn btn-ghost" id="gdriveConnect" disabled>Google Drive Connect කරන්න</button>
+        <button class="btn btn-primary" id="gdriveUpload" disabled>Backup Drive එකට Upload කරන්න</button>
       </div>
+      <div id="gdriveStatus" style="font-size:.8rem;color:var(--muted);margin-bottom:12px;">Google Drive සම්බන්ධ වී නැත</div>
       <div id="histList"></div>
     </div>
   </div>
@@ -314,6 +318,7 @@ document.getElementById('saveBtn').addEventListener('click', async ()=>{
   }catch(e){ alert('Save වුනේ නෑ, network එක check කරලා try කරන්න.'); btn.disabled=false; btn.textContent='Save & New'; return; }
   btn.disabled = false; btn.textContent = 'Save & New';
   alert('Invoice එක save කළා: '+lastInvoiceData.invNo+(db?' (cloud එකට sync වුනා)':' (මේ device එකේ save වුනා)'));
+  autoSyncToDrive();
   document.getElementById('previewWrap').classList.add('hidden');
   itemBody.innerHTML=''; for(let i=0;i<3;i++) addRow();
   document.getElementById('custName').value=''; document.getElementById('custNum').value=''; document.getElementById('custAddr').value='';
@@ -365,6 +370,85 @@ function switchTab(name){
   if(name==='history') renderHistory();
 }
 document.querySelectorAll('.tab-btn').forEach(b=> b.addEventListener('click', ()=>switchTab(b.dataset.tab)));
+
+// ---- Google Drive backup (works when hosted on your own domain / GitHub Pages, not on claude.ai) ----
+const GOOGLE_CLIENT_ID = '88902785676-ced8hueoo9f38bv3i4vegiv860rq31gd.apps.googleusercontent.com';
+let gAccessToken = null, tokenClient = null, driveFileId = localStorage.getItem('kime_drive_file_id') || null;
+
+function initGoogleAuth(){
+  const statusEl = document.getElementById('gdriveStatus');
+  if(!(window.google && google.accounts && google.accounts.oauth2)){
+    statusEl.textContent = 'මේ page එක GitHub Pages/own domain එකකින් open කළොත් විතරයි Google Drive Connect කරන්න පුලුවන් (claude.ai link එකේ Google scripts block වෙනවා).';
+    return;
+  }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    callback: (resp)=>{
+      if(resp.error){ statusEl.textContent = 'Google login අසාර්ථකයි: '+resp.error; return; }
+      gAccessToken = resp.access_token;
+      statusEl.textContent = '✅ Google Drive connect වුනා - upload කරන්න පුලුවන්';
+      document.getElementById('gdriveUpload').disabled = false;
+    }
+  });
+  document.getElementById('gdriveConnect').disabled = false;
+  statusEl.textContent = 'Google Drive සම්බන්ධ වී නැත - Connect කරන්න click කරන්න';
+}
+window.addEventListener('load', ()=> setTimeout(initGoogleAuth, 900));
+
+document.getElementById('gdriveConnect').addEventListener('click', ()=>{
+  if(tokenClient) tokenClient.requestAccessToken();
+});
+
+async function uploadJSONToDrive(filename, obj){
+  if(driveFileId){
+    const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+gAccessToken, 'Content-Type':'application/json' },
+      body: JSON.stringify(obj)
+    });
+    if(!res.ok){ if(res.status===404){ driveFileId=null; localStorage.removeItem('kime_drive_file_id'); return uploadJSONToDrive(filename,obj); } throw new Error(await res.text()); }
+    return res.json();
+  }
+  const boundary = '-------kimeboundary';
+  const metadata = { name: filename, mimeType: 'application/json' };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`+
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(obj)}\r\n--${boundary}--`;
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method:'POST',
+    headers:{ 'Authorization':'Bearer '+gAccessToken, 'Content-Type':'multipart/related; boundary='+boundary },
+    body
+  });
+  if(!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  driveFileId = json.id;
+  localStorage.setItem('kime_drive_file_id', driveFileId);
+  return json;
+}
+
+// auto-sync: called right after every save. Silent (no alert) unless it fails while user is actively watching Drive status.
+async function autoSyncToDrive(){
+  if(!gAccessToken) return;
+  const statusEl = document.getElementById('gdriveStatus');
+  try{
+    await uploadJSONToDrive('kime_sales_backup_latest.json', { invoices: cachedInvoices });
+    statusEl.textContent = '✅ Auto-sync වුනා (Drive) - '+new Date().toLocaleTimeString();
+  }catch(e){
+    statusEl.textContent = '⚠ Auto-sync අසාර්ථකයි, "Backup Drive එකට Upload කරන්න" click කරලා try කරන්න.';
+  }
+}
+
+document.getElementById('gdriveUpload').addEventListener('click', async ()=>{
+  if(!gAccessToken){ alert('මුලින්ම Connect කරන්න.'); return; }
+  const btn = document.getElementById('gdriveUpload');
+  btn.disabled = true; btn.textContent = 'Uploading...';
+  try{
+    await uploadJSONToDrive('kime_sales_backup_'+new Date().toISOString().slice(0,10)+'.json', { invoices: cachedInvoices });
+    document.getElementById('gdriveStatus').textContent = '✅ Drive එකට upload කළා - '+new Date().toLocaleTimeString();
+  }catch(e){ alert('Upload අසාර්ථකයි: '+e.message); }
+  btn.disabled = false; btn.textContent = 'Backup Drive එකට Upload කරන්න';
+});
 </script>
 </body>
 </html>
